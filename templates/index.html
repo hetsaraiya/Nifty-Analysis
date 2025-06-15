@@ -1,0 +1,1137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NIFTY 50 Options Greeks - Yahoo Finance</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #3498db;
+            --success-color: #27ae60;
+            --danger-color: #e74c3c;
+            --warning-color: #f39c12;
+            --info-color: #17a2b8;
+            --dark-color: #343a40;
+            --light-color: #f8f9fa;
+        }
+
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+
+        .main-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            margin: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+        }
+
+        .header-section {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+
+        .metric-card {
+            background: white;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border-left: 5px solid var(--secondary-color);
+        }
+
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--primary-color);
+        }
+
+        .metric-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .chart-container {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .data-table {
+            background: white;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 8px 16px rgba(0, 0, 0, 0.1);
+        }
+
+        .table-responsive {
+            border-radius: 15px;
+        }
+
+        .table th {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 15px 10px;
+            font-size: 0.85rem;
+            text-align: center;
+        }
+
+        .table td {
+            padding: 12px 8px;
+            text-align: center;
+            border-color: #e9ecef;
+            font-size: 0.85rem;
+        }
+
+        .atm-row {
+            background: rgba(52, 152, 219, 0.1);
+            font-weight: bold;
+        }
+
+        .positive { color: var(--success-color); }
+        .negative { color: var(--danger-color); }
+
+        .loading-spinner {
+            display: none;
+            text-align: center;
+            padding: 50px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .status-online { background-color: var(--success-color); }
+        .status-offline { background-color: var(--danger-color); }
+
+        .refresh-btn {
+            background: linear-gradient(135deg, var(--success-color), #2ecc71);
+            border: none;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 25px;
+            transition: all 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+        }
+
+        .support-resistance {
+            background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .greeks-section {
+            background: linear-gradient(135deg, #a8edea 0%, #fed6e3 100%);
+            border-radius: 15px;
+            padding: 20px;
+            margin: 20px 0;
+        }
+
+        @media (max-width: 768px) {
+            .main-container {
+                margin: 10px;
+                padding: 15px;
+            }
+            
+            .metric-value {
+                font-size: 1.5rem;
+            }
+            
+            .table th, .table td {
+                padding: 8px 4px;
+                font-size: 0.75rem;
+            }
+        }
+
+        .fade-in {
+            animation: fadeIn 0.5s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Credential Modal Styles */
+        .credential-modal .modal-header {
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+            color: white;
+        }
+
+        .credential-modal .form-label {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+
+        .credential-modal .form-control:focus {
+            border-color: var(--secondary-color);
+            box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.25);
+        }
+
+        .credential-modal .btn-primary {
+            background: linear-gradient(135deg, var(--secondary-color), #2980b9);
+            border: none;
+        }
+
+        .credential-modal .btn-primary:hover {
+            background: linear-gradient(135deg, #2980b9, var(--secondary-color));
+            transform: translateY(-1px);
+        }
+
+        /* Toast Notification Styles */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+        }
+
+        .toast {
+            min-width: 300px;
+        }
+
+        .toast-success {
+            background-color: var(--success-color);
+            color: white;
+        }
+
+        .toast-error {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .toast-warning {
+            background-color: var(--warning-color);
+            color: white;
+        }
+
+        /* Enhanced Connection Status Styles */
+        .status-connected { background-color: var(--success-color); }
+        .status-demo { background-color: var(--warning-color); }
+        .status-configure { background-color: var(--danger-color); }
+        .status-failed { background-color: var(--danger-color); }
+
+        /* Demo Alert Styles */
+        .alert-warning {
+            background: linear-gradient(135deg, #fff3cd, #ffeaa7);
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        /* ATM Toggle Styles */
+        .form-switch .form-check-input {
+            width: 3rem;
+            height: 1.5rem;
+            background-color: #dee2e6;
+            border: 1px solid #adb5bd;
+            cursor: pointer;
+        }
+
+        .form-switch .form-check-input:checked {
+            background-color: var(--success-color);
+            border-color: var(--success-color);
+        }
+
+        .form-switch .form-check-input:focus {
+            box-shadow: 0 0 0 0.25rem rgba(39, 174, 96, 0.25);
+        }
+
+        .form-check-label {
+            cursor: pointer;
+            font-weight: 500;
+            transition: color 0.3s ease;
+        }
+
+        /* Enhanced OI Chart and Level Styling */
+        .level-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 8px 12px;
+            margin-bottom: 6px;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 6px;
+            border-left: 4px solid var(--success-color);
+        }
+
+        .level-strike {
+            font-weight: 600;
+            color: var(--dark-color);
+        }
+
+        .level-oi {
+            font-size: 0.9em;
+            color: var(--secondary-color);
+        }
+
+        .support-resistance .level-item:first-child {
+            border-left-color: var(--success-color);
+            background: rgba(39, 174, 96, 0.1);
+        }
+
+        .support-resistance .level-item:nth-child(2) {
+            border-left-color: var(--warning-color);
+            background: rgba(243, 156, 18, 0.1);
+        }
+
+        .support-resistance .level-item:nth-child(3) {
+            border-left-color: var(--info-color);
+            background: rgba(23, 162, 184, 0.1);
+        }
+
+        /* Enhanced chart styling */
+        .chart-container canvas {
+            border-radius: 8px;
+        }
+
+        .chart-container h5 {
+            color: var(--primary-color);
+            border-bottom: 2px solid var(--secondary-color);
+            padding-bottom: 8px;
+            margin-bottom: 20px;
+        }
+
+        /* Strike column highlighting */
+        .strike-column {
+            background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%) !important;
+            font-weight: 700 !important;
+            border-left: 3px solid var(--warning-color) !important;
+            border-right: 3px solid var(--warning-color) !important;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="main-container">
+            <!-- Header Section -->
+            <div class="header-section">
+                <h1><i class="fas fa-chart-line"></i> NIFTY 50 Option Chain Analysis</h1>
+                <p class="mb-0">Real-time option chain analysis with advanced Greeks calculations using Yahoo Finance data</p>
+                <div class="mt-3">
+                    <span class="status-indicator status-offline" id="statusIndicator"></span>
+                    <span id="connectionStatus">Connecting...</span>
+                    <button class="btn refresh-btn ms-3" onclick="refreshData()">
+                        <i class="fas fa-sync-alt" id="refreshIcon"></i> Refresh
+                    </button>
+                    <button class="btn btn-outline-light ms-2" onclick="openDataSourceModal()">
+                        <i class="fas fa-info-circle"></i> Info
+                    </button>
+                </div>
+            </div>
+
+            <!-- Demo Data Alert -->
+            <div class="alert alert-warning alert-dismissible fade show" id="demoAlert" style="display: none;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <strong>Live Mode:</strong> Currently using Yahoo Finance for real-time NIFTY data and advanced Greeks calculations.
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            </div>
+
+            <!-- Options Control Panel -->
+            <div class="row mb-3">
+                <div class="col-12">
+                    <div class="card border-0 shadow-sm">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <h6 class="card-title mb-0"><i class="fas fa-cog"></i> Options Chain Settings</h6>
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" role="switch" id="atmOnlyToggle" onchange="toggleATMMode()">
+                                    <label class="form-check-label" for="atmOnlyToggle">
+                                        ATM Focus (5+5 strikes)
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Loading Spinner -->
+            <div class="loading-spinner" id="loadingSpinner">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+                <p class="mt-3">Fetching latest option chain data...</p>
+            </div>
+
+            <!-- Main Content -->
+            <div id="mainContent" style="display: none;">
+                <!-- Key Metrics Row -->
+                <div class="row" id="metricsRow">
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">NIFTY Spot</div>
+                            <div class="metric-value" id="spotPrice">-</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">ATM Strike</div>
+                            <div class="metric-value" id="atmStrike">-</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">Max Pain</div>
+                            <div class="metric-value" id="maxPain">-</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">Total PCR</div>
+                            <div class="metric-value" id="totalPCR">-</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">Call OI</div>
+                            <div class="metric-value" id="totalCallOI">-</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-2 col-md-4 col-sm-6">
+                        <div class="metric-card">
+                            <div class="metric-label">Put OI</div>
+                            <div class="metric-value" id="totalPutOI">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Support/Resistance Section -->
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="support-resistance">
+                            <h5><i class="fas fa-arrow-up text-success"></i> Support Levels</h5>
+                            <div id="supportLevels"></div>
+                        </div>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="support-resistance">
+                            <h5><i class="fas fa-arrow-down text-danger"></i> Resistance Levels</h5>
+                            <div id="resistanceLevels"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Section -->
+                <div class="row">
+                    <div class="col-lg-8">
+                        <div class="chart-container">
+                            <h5><i class="fas fa-bar-chart"></i> Open Interest Analysis</h5>
+                            <canvas id="oiChart" height="100"></canvas>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="chart-container">
+                            <h5><i class="fas fa-line-chart"></i> PCR by Strike</h5>
+                            <canvas id="pcrChart" height="200"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Greeks Section -->
+                <div class="greeks-section">
+                    <h5><i class="fas fa-calculator"></i> Option Greeks (ATM Range)</h5>
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Strike</th>
+                                    <th>Call Delta</th>
+                                    <th>Call Gamma</th>
+                                    <th>Call Theta</th>
+                                    <th>Call Vega</th>
+                                    <th>Put Delta</th>
+                                    <th>Put Gamma</th>
+                                    <th>Put Theta</th>
+                                    <th>Put Vega</th>
+                                </tr>
+                            </thead>
+                            <tbody id="greeksTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Option Chain Table -->
+                <div class="data-table">
+                    <h5 class="p-3 mb-0"><i class="fas fa-table"></i> Complete Option Chain</h5>
+                    <div class="table-responsive">
+                        <table class="table table-striped table-hover mb-0">
+                            <thead>
+                                <tr>
+                                    <th colspan="8" class="text-center bg-success">CALLS</th>
+                                    <th rowspan="2" class="text-center">Strike</th>
+                                    <th colspan="8" class="text-center bg-danger">PUTS</th>
+                                </tr>
+                                <tr>
+                                    <th>OI</th>
+                                    <th>Chg OI</th>
+                                    <th>Volume</th>
+                                    <th>IV</th>
+                                    <th>LTP</th>
+                                    <th>Change</th>
+                                    <th>Bid</th>
+                                    <th>Ask</th>
+                                    <th>Bid</th>
+                                    <th>Ask</th>
+                                    <th>Change</th>
+                                    <th>LTP</th>
+                                    <th>IV</th>
+                                    <th>Volume</th>
+                                    <th>Chg OI</th>
+                                    <th>OI</th>
+                                </tr>
+                            </thead>
+                            <tbody id="optionChainTable">
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Last Updated -->
+                <div class="text-center mt-4">
+                    <small class="text-muted">Last Updated: <span id="lastUpdated">-</span></small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Source Info Modal -->
+    <div class="modal fade" id="dataSourceModal" tabindex="-1" aria-labelledby="dataSourceModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="dataSourceModalLabel">
+                        <i class="fas fa-chart-line"></i> Yahoo Finance Data Source
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="alert alert-success">
+                        <h6><i class="fas fa-check-circle"></i> Real-time Data Features:</h6>
+                        <ul class="mb-0">
+                            <li><strong>Live NIFTY 50 Pricing:</strong> Real-time spot prices from Yahoo Finance</li>
+                            <li><strong>Historical Volatility:</strong> Calculated from recent price movements</li>
+                            <li><strong>Advanced Greeks:</strong> Comprehensive Black-Scholes calculations</li>
+                            <li><strong>Options Chain Generation:</strong> Theoretical pricing for all strikes</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="alert alert-info">
+                        <h6><i class="fas fa-info-circle"></i> About This Application:</h6>
+                        <p class="mb-2">This application provides sophisticated options analysis using:</p>
+                        <ul class="mb-0">
+                            <li>Yahoo Finance API for real-time NIFTY data</li>
+                            <li>Black-Scholes model for theoretical option pricing</li>
+                            <li>Complete Greeks calculation (Delta, Gamma, Theta, Vega, Rho)</li>
+                            <li>Portfolio-level risk analysis</li>
+                            <li>Implied volatility calculations</li>
+                        </ul>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" data-bs-dismiss="modal">
+                        <i class="fas fa-check"></i> Got it!
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer">
+        <!-- Toasts will be dynamically added here -->
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let autoRefreshInterval;
+        let oiChart, pcrChart;
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            refreshData();
+            startAutoRefresh();
+            checkDataSource();
+        });
+
+        // Toggle ATM mode and refresh data
+        function toggleATMMode() {
+            const toggle = document.getElementById('atmOnlyToggle');
+            const label = toggle.nextElementSibling;
+            
+            if (toggle.checked) {
+                label.innerHTML = 'ATM Focus (5+5 strikes) - Active';
+                label.classList.add('text-success');
+                showToast('Switched to ATM focus mode - showing 11 strikes around ATM', 'success');
+            } else {
+                label.innerHTML = 'ATM Focus (5+5 strikes)';
+                label.classList.remove('text-success');
+                showToast('Switched to full options chain - showing 31 strikes', 'success');
+            }
+            
+            // Refresh data with new setting
+            refreshData();
+        }
+
+        function initializeCharts() {
+            // OI Chart
+            const oiCtx = document.getElementById('oiChart').getContext('2d');
+            oiChart = new Chart(oiCtx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Call OI',
+                        data: [],
+                        backgroundColor: 'rgba(40, 167, 69, 0.8)',
+                        borderColor: 'rgba(40, 167, 69, 1)',
+                        borderWidth: 1
+                    }, {
+                        label: 'Put OI',
+                        data: [],
+                        backgroundColor: 'rgba(220, 53, 69, 0.8)',
+                        borderColor: 'rgba(220, 53, 69, 1)',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                callback: function(value) {
+                                    return (value / 1000).toFixed(0) + 'K';
+                                }
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return context.dataset.label + ': ' + 
+                                           context.parsed.y.toLocaleString();
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // PCR Chart
+            const pcrCtx = document.getElementById('pcrChart').getContext('2d');
+            pcrChart = new Chart(pcrCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'PCR',
+                        data: [],
+                        borderColor: 'rgba(54, 162, 235, 1)',
+                        backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        }
+                    }
+                }
+            });
+        }
+
+        async function refreshData() {
+            const refreshIcon = document.getElementById('refreshIcon');
+            const loadingSpinner = document.getElementById('loadingSpinner');
+            const mainContent = document.getElementById('mainContent');
+
+            // Show loading state
+            refreshIcon.classList.add('fa-spin');
+            loadingSpinner.style.display = 'block';
+            mainContent.style.display = 'none';
+
+            try {
+                // Get ATM toggle state
+                const atmOnlyMode = document.getElementById('atmOnlyToggle').checked;
+                
+                // Fetch options chain data from new Yahoo Finance API
+                const response = await fetch('/api/options-chain', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        num_strikes: atmOnlyMode ? 11 : 31,
+                        risk_free_rate: 0.065,
+                        atm_only: atmOnlyMode
+                    })
+                });
+                
+                const data = await response.json();
+
+                if (data.success && data.data) {
+                    updateYahooUI(data);
+                    updateConnectionStatus(data);
+                    showToast('Data refreshed successfully', 'success');
+                } else {
+                    throw new Error(data.error || 'Failed to fetch options chain data');
+                }
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                updateConnectionStatus({ success: false, data_source: 'Yahoo Finance', error: error.message });
+                showToast('Failed to fetch option chain data. Please try again.', 'error');
+            } finally {
+                refreshIcon.classList.remove('fa-spin');
+                loadingSpinner.style.display = 'none';
+                mainContent.style.display = 'block';
+            }
+        }
+
+        function updateYahooUI(data) {
+            if (!data.data || !data.metadata) return;
+            
+            // Update basic metrics from metadata
+            const metadata = data.metadata;
+            document.getElementById('spotPrice').textContent = metadata.spot_price.toFixed(2);
+            
+            // Update analytics from enhanced data
+            if (data.analytics) {
+                const analytics = data.analytics;
+                
+                // Update key metrics
+                if (analytics.atm_strike) {
+                    document.getElementById('atmStrike').textContent = analytics.atm_strike;
+                }
+                if (analytics.max_pain_strike) {
+                    document.getElementById('maxPain').textContent = analytics.max_pain_strike;
+                }
+                if (analytics.total_pcr) {
+                    document.getElementById('totalPCR').textContent = analytics.total_pcr.toFixed(4);
+                }
+                if (analytics.total_call_oi) {
+                    document.getElementById('totalCallOI').textContent = formatNumber(analytics.total_call_oi) + 'L';
+                }
+                if (analytics.total_put_oi) {
+                    document.getElementById('totalPutOI').textContent = formatNumber(analytics.total_put_oi) + 'L';
+                }
+                
+                // Update support and resistance levels
+                updateSupportResistanceLevels(analytics.support_levels, analytics.resistance_levels);
+                
+                // Update OI Chart with enhanced data
+                if (analytics.oi_chart_data) {
+                    updateOIChart(analytics.oi_chart_data, metadata.spot_price);
+                }
+                
+                // Update PCR chart
+                updatePCRChart(data.data, metadata.spot_price);
+            } else {
+                // Fallback for missing analytics
+                const strikes = [...new Set(data.data.map(d => d.strike))].sort((a, b) => a - b);
+                const atmStrike = strikes.reduce((prev, curr) => 
+                    Math.abs(curr - metadata.spot_price) < Math.abs(prev - metadata.spot_price) ? curr : prev
+                );
+                document.getElementById('atmStrike').textContent = atmStrike;
+                
+                // Update placeholders
+                document.getElementById('maxPain').textContent = 'Calculating...';
+                document.getElementById('totalPCR').textContent = 'Calculating...';
+                document.getElementById('totalCallOI').textContent = 'Calculating...';
+                document.getElementById('totalPutOI').textContent = 'Calculating...';
+            }
+
+            // Update option chain table with new data structure
+            updateYahooOptionChainTable(data.data, metadata.spot_price);
+            
+            // Update Greeks table
+            updateYahooGreeksTable(data.data, metadata.spot_price);
+
+            // Update timestamp
+            document.getElementById('lastUpdated').textContent = 
+                new Date(data.timestamp).toLocaleString();
+
+            // Add fade-in animation
+            document.getElementById('mainContent').classList.add('fade-in');
+        }
+
+        function updateOIChart(oiChartData, spotPrice) {
+            if (!oiChart || !oiChartData) return;
+
+            const atmIndex = oiChartData.labels.findIndex(label => 
+                Math.abs(parseFloat(label) - spotPrice) < 25
+            );
+
+            // Update chart data
+            oiChart.data.labels = oiChartData.labels;
+            oiChart.data.datasets[0].data = oiChartData.call_oi;
+            oiChart.data.datasets[1].data = oiChartData.put_oi;
+
+            // Highlight ATM strike
+            oiChart.data.datasets[0].backgroundColor = oiChartData.labels.map((label, index) => {
+                if (index === atmIndex) {
+                    return 'rgba(40, 167, 69, 1)'; // Darker green for ATM
+                }
+                return 'rgba(40, 167, 69, 0.8)';
+            });
+
+            oiChart.data.datasets[1].backgroundColor = oiChartData.labels.map((label, index) => {
+                if (index === atmIndex) {
+                    return 'rgba(220, 53, 69, 1)'; // Darker red for ATM
+                }
+                return 'rgba(220, 53, 69, 0.8)';
+            });
+
+            // Update chart options to show better tooltips
+            oiChart.options.plugins.tooltip.callbacks.label = function(context) {
+                const label = context.dataset.label || '';
+                const value = context.parsed.y;
+                return `${label}: ${formatNumber(value)}L (${value.toFixed(2)}L)`;
+            };
+
+            // Add subtitle with total OI
+            oiChart.options.plugins.title = {
+                display: true,
+                text: [
+                    'Open Interest Analysis',
+                    `Total Call OI: ${formatNumber(oiChartData.total_call_oi)}L | Total Put OI: ${formatNumber(oiChartData.total_put_oi)}L | PCR: ${oiChartData.total_pcr.toFixed(3)}`
+                ],
+                font: {
+                    size: 14
+                }
+            };
+
+            oiChart.update('none'); // Update without animation for better performance
+        }
+
+        function updatePCRChart(optionsData, spotPrice) {
+            if (!pcrChart) return;
+
+            // Calculate PCR by strike
+            const strikeData = {};
+            optionsData.forEach(option => {
+                if (!strikeData[option.strike]) {
+                    strikeData[option.strike] = { call_oi: 0, put_oi: 0 };
+                }
+                if (option.option_type.toLowerCase() === 'call') {
+                    strikeData[option.strike].call_oi = option.open_interest || 0;
+                } else {
+                    strikeData[option.strike].put_oi = option.open_interest || 0;
+                }
+            });
+
+            const strikes = Object.keys(strikeData).sort((a, b) => parseFloat(a) - parseFloat(b));
+            const pcrValues = strikes.map(strike => {
+                const data = strikeData[strike];
+                return data.call_oi > 0 ? data.put_oi / data.call_oi : 0;
+            });
+
+            pcrChart.data.labels = strikes.map(s => s.toString());
+            pcrChart.data.datasets[0].data = pcrValues;
+
+            // Add ATM line
+            const atmStrike = strikes.find(strike => Math.abs(parseFloat(strike) - spotPrice) < 25);
+            if (atmStrike) {
+                pcrChart.options.plugins.annotation = {
+                    annotations: {
+                        atmLine: {
+                            type: 'line',
+                            xMin: atmStrike,
+                            xMax: atmStrike,
+                            borderColor: 'rgba(255, 193, 7, 0.8)',
+                            borderWidth: 2,
+                            label: {
+                                content: 'ATM',
+                                enabled: true,
+                                position: 'top'
+                            }
+                        }
+                    }
+                };
+            }
+
+            pcrChart.update('none');
+        }
+
+        function updateSupportResistanceLevels(supportLevels, resistanceLevels) {
+            const supportDiv = document.getElementById('supportLevels');
+            const resistanceDiv = document.getElementById('resistanceLevels');
+
+            if (supportLevels && supportLevels.length > 0) {
+                supportDiv.innerHTML = supportLevels.map(level => 
+                    `<div class="level-item">
+                        <span class="level-strike">${level.strike}</span>
+                        <span class="level-oi">${formatNumber(level.put_oi)}L OI</span>
+                    </div>`
+                ).join('');
+            } else {
+                supportDiv.innerHTML = '<div class="text-muted">Calculating support levels...</div>';
+            }
+
+            if (resistanceLevels && resistanceLevels.length > 0) {
+                resistanceDiv.innerHTML = resistanceLevels.map(level => 
+                    `<div class="level-item">
+                        <span class="level-strike">${level.strike}</span>
+                        <span class="level-oi">${formatNumber(level.call_oi)}L OI</span>
+                    </div>`
+                ).join('');
+            } else {
+                resistanceDiv.innerHTML = '<div class="text-muted">Calculating resistance levels...</div>';
+            }
+        }
+
+        function updateYahooOptionChainTable(optionsData, spotPrice) {
+            const tableBody = document.getElementById('optionChainTable');
+            if (!tableBody) return;
+            
+            // Group data by strike
+            const strikeData = {};
+            optionsData.forEach(option => {
+                if (!strikeData[option.strike]) {
+                    strikeData[option.strike] = {};
+                }
+                strikeData[option.strike][option.option_type.toLowerCase()] = option;
+            });
+            
+            // Generate table rows
+            const strikes = Object.keys(strikeData).sort((a, b) => parseFloat(a) - parseFloat(b));
+            
+            tableBody.innerHTML = strikes.map(strike => {
+                const callData = strikeData[strike].call || {};
+                const putData = strikeData[strike].put || {};
+                const strikeNum = parseFloat(strike);
+                const isATM = Math.abs(strikeNum - spotPrice) <= 25;
+                
+                // Format functions for display
+                const formatOI = (oi) => oi ? formatNumber(oi) + 'L' : '-';
+                const formatChangeOI = (chg) => {
+                    if (!chg || chg === 0) return '-';
+                    const sign = chg > 0 ? '+' : '';
+                    return `${sign}${formatNumber(chg)}L`;
+                };
+                const formatVolume = (vol) => vol ? formatNumber(vol) + 'L' : '-';
+                const formatIV = (iv) => iv ? (iv * 100).toFixed(1) + '%' : '-';
+                const formatPrice = (price) => price ? price.toFixed(2) : '-';
+                const formatChange = (change, changePercent) => {
+                    if (!change) return '-';
+                    const sign = change > 0 ? '+' : '';
+                    const percentStr = changePercent ? ` (${changePercent.toFixed(1)}%)` : '';
+                    return `${sign}${change.toFixed(2)}${percentStr}`;
+                };
+                
+                return `
+                    <tr class="${isATM ? 'table-warning' : ''}">
+                        <!-- Call Data -->
+                        <td class="text-center">${formatOI(callData.open_interest)}</td>
+                        <td class="text-center ${callData.change_in_oi > 0 ? 'text-success' : callData.change_in_oi < 0 ? 'text-danger' : ''}">
+                            ${formatChangeOI(callData.change_in_oi)}
+                        </td>
+                        <td class="text-center">${formatVolume(callData.volume)}</td>
+                        <td class="text-center">${formatIV(callData.implied_volatility)}</td>
+                        <td class="text-center fw-bold">${formatPrice(callData.ltp || callData.theoretical_price)}</td>
+                        <td class="text-center ${callData.change > 0 ? 'text-success' : callData.change < 0 ? 'text-danger' : ''}">
+                            ${formatChange(callData.change, callData.change_percent)}
+                        </td>
+                        <td class="text-center">${formatPrice(callData.bid_price)}</td>
+                        <td class="text-center">${formatPrice(callData.ask_price)}</td>
+                        
+                        <!-- Strike Price -->
+                        <td class="text-center fw-bold strike-column ${isATM ? 'bg-warning' : ''}">${strikeNum}</td>
+                        
+                        <!-- Put Data -->
+                        <td class="text-center">${formatPrice(putData.bid_price)}</td>
+                        <td class="text-center">${formatPrice(putData.ask_price)}</td>
+                        <td class="text-center ${putData.change > 0 ? 'text-success' : putData.change < 0 ? 'text-danger' : ''}">
+                            ${formatChange(putData.change, putData.change_percent)}
+                        </td>
+                        <td class="text-center fw-bold">${formatPrice(putData.ltp || putData.theoretical_price)}</td>
+                        <td class="text-center">${formatIV(putData.implied_volatility)}</td>
+                        <td class="text-center">${formatVolume(putData.volume)}</td>
+                        <td class="text-center ${putData.change_in_oi > 0 ? 'text-success' : putData.change_in_oi < 0 ? 'text-danger' : ''}">
+                            ${formatChangeOI(putData.change_in_oi)}
+                        </td>
+                        <td class="text-center">${formatOI(putData.open_interest)}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        function updateYahooGreeksTable(optionsData, spotPrice) {
+            const tableBody = document.getElementById('greeksTable');
+            if (!tableBody) return;
+            
+            // Get call options and sort by strike
+            const callOptions = optionsData
+                .filter(option => option.option_type === 'CALL')
+                .sort((a, b) => a.strike - b.strike);
+            
+            tableBody.innerHTML = callOptions.map(option => {
+                const isATM = Math.abs(option.strike - spotPrice) <= 25;
+                
+                return `
+                    <tr class="${isATM ? 'table-warning' : ''}">
+                        <td class="text-center">${option.strike}</td>
+                        <td class="text-center">${option.option_type}</td>
+                        <td class="text-center">${option.theoretical_price.toFixed(2)}</td>
+                        <td class="text-center">${option.delta.toFixed(4)}</td>
+                        <td class="text-center">${option.gamma.toFixed(6)}</td>
+                        <td class="text-center">${option.theta.toFixed(4)}</td>
+                        <td class="text-center">${option.vega.toFixed(4)}</td>
+                        <td class="text-center">${option.rho.toFixed(4)}</td>
+                        <td class="text-center">${(option.implied_volatility * 100).toFixed(2)}%</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        // Removed old updateUI, updateCharts, and other legacy functions
+        // Only using Yahoo Finance compatible functions now
+
+        function formatNumber(num) {
+            if (num >= 1000000) {
+                return (num / 1000000).toFixed(1) + 'M';
+            } else if (num >= 1000) {
+                return (num / 1000).toFixed(1) + 'K';
+            }
+            return num.toString();
+        }
+
+        function updateConnectionStatus(data) {
+            const indicator = document.getElementById('statusIndicator');
+            const status = document.getElementById('connectionStatus');
+            
+            if (data.success && data.data_source === 'Yahoo Finance') {
+                indicator.className = 'status-indicator status-connected';
+                status.textContent = 'Connected (Yahoo Finance)';
+            } else if (data.success) {
+                indicator.className = 'status-indicator status-connected';
+                status.textContent = 'Connected (Live Data)';
+            } else {
+                indicator.className = 'status-indicator status-failed';
+                status.textContent = 'Connection Error';
+            }
+        }
+
+        function startAutoRefresh() {
+            // Refresh every 30 seconds
+            autoRefreshInterval = setInterval(refreshData, 30000);
+        }
+
+        function showError(message) {
+            showToast(message, 'error');
+            console.error(message);
+        }
+
+        // Data source and credential management functions
+        function openDataSourceModal() {
+            const modal = new bootstrap.Modal(document.getElementById('dataSourceModal'));
+            modal.show();
+        }
+
+        async function checkDataSource() {
+            try {
+                const response = await fetch('/api/status');
+                const data = await response.json();
+                
+                if (data.status === 'healthy') {
+                    console.log('Yahoo Finance data source is healthy');
+                    return true;
+                } else {
+                    console.log('Yahoo Finance data source status:', data.status);
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error checking data source:', error);
+                return false;
+            }
+        }
+
+        function showToast(message, type = 'success') {
+            const toastContainer = document.getElementById('toastContainer');
+            
+            // Create unique toast ID
+            const toastId = 'toast-' + Date.now();
+            
+            // Create toast element
+            const toastHTML = 
+                '<div class="toast toast-' + type + '" id="' + toastId + '" role="alert" aria-live="assertive" aria-atomic="true">' +
+                    '<div class="toast-header">' +
+                        '<i class="fas ' + (type === 'success' ? 'fa-check-circle' : type === 'error' ? 'fa-exclamation-circle' : 'fa-exclamation-triangle') + ' me-2"></i>' +
+                        '<strong class="me-auto">' + (type === 'success' ? 'Success' : type === 'error' ? 'Error' : 'Warning') + '</strong>' +
+                        '<small>just now</small>' +
+                        '<button type="button" class="btn-close btn-close-white" data-bs-dismiss="toast" aria-label="Close"></button>' +
+                    '</div>' +
+                    '<div class="toast-body">' +
+                        message +
+                    '</div>' +
+                '</div>';
+            
+            // Add toast to container
+            toastContainer.insertAdjacentHTML('beforeend', toastHTML);
+            
+            // Initialize and show toast
+            const toastElement = document.getElementById(toastId);
+            const toast = new bootstrap.Toast(toastElement, {
+                autohide: true,
+                delay: 5000
+            });
+            
+            toast.show();
+            
+            // Remove toast element after it's hidden
+            toastElement.addEventListener('hidden.bs.toast', function() {
+                toastElement.remove();
+            });
+        }
+
+        // Initialize the application when DOM is ready
+        // (Already initialized above in the main script)
+    </script>
+</body>
+</html>

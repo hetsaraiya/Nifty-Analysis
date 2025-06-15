@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  # FastAPI Yahoo Finance Service (Recommended for quick start)
+  nifty-yahoo-api:
+    build: .
+    container_name: nifty-yahoo-api
+    ports:
+      - "8000:8000"
+    environment:
+      - FLASK_DEBUG=${FLASK_DEBUG:-false}
+      - CACHE_TIMEOUT=${CACHE_TIMEOUT:-300}
+      - SECRET_KEY=${SECRET_KEY:-nifty-option-chain-analysis-2024}
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - NIFTY_SERVICE=yahoo
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["yahoo"]
+
+  # Full FastAPI Service with Angel One API
+  nifty-full-api:
+    build: .
+    container_name: nifty-full-api
+    ports:
+      - "8001:8000"
+    environment:
+      - FLASK_DEBUG=${FLASK_DEBUG:-false}
+      - CACHE_TIMEOUT=${CACHE_TIMEOUT:-300}
+      - SECRET_KEY=${SECRET_KEY:-nifty-option-chain-analysis-2024}
+      - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY:-}
+      - ANGEL_ONE_CLIENT_ID=${ANGEL_ONE_CLIENT_ID:-}
+      - ANGEL_ONE_PASSWORD=${ANGEL_ONE_PASSWORD:-}
+      - ANGEL_ONE_TOTP_SECRET=${ANGEL_ONE_TOTP_SECRET:-}
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - NIFTY_SERVICE=full
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["full"]
+
+  # Flask Application Service
+  nifty-flask-app:
+    build: .
+    container_name: nifty-flask-app
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_DEBUG=${FLASK_DEBUG:-false}
+      - CACHE_TIMEOUT=${CACHE_TIMEOUT:-300}
+      - SECRET_KEY=${SECRET_KEY:-nifty-option-chain-analysis-2024}
+      - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY:-}
+      - ANGEL_ONE_CLIENT_ID=${ANGEL_ONE_CLIENT_ID:-}
+      - ANGEL_ONE_PASSWORD=${ANGEL_ONE_PASSWORD:-}
+      - ANGEL_ONE_TOTP_SECRET=${ANGEL_ONE_TOTP_SECRET:-}
+      - HOST=${HOST:-0.0.0.0}
+      - PORT=${PORT:-5000}
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONUNBUFFERED=1
+      - NIFTY_SERVICE=flask
+    volumes:
+      - ./logs:/app/logs
+      - ./templates:/app/templates
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    command: ["flask"]
+    depends_on:
+      - nifty-yahoo-api
+
+networks:
+  default:
+    name: nifty-analysis-network
