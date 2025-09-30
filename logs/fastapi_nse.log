@@ -1,5 +1,0 @@
-2025-09-30 17:55:46 | INFO | nse_data_fetcher:__init__:63 | NSE Data Fetcher initialized
-2025-09-30 17:55:46 | INFO | nse_nifty_greeks:__init__:148 | NSE Finance API client initialized
-2025-09-30 17:55:46 | INFO | nse_nifty_greeks:__init__:148 | NSE Finance API client initialized
-2025-09-30 17:55:46 | INFO | nse_nifty_greeks:__init__:222 | NIFTY Options Chain generator initialized
-2025-09-30 17:55:46 | INFO | nse_nifty_greeks:__init__:449 | Portfolio Greeks calculator initialized
