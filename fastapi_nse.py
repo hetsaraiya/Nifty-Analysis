@@ -24,7 +24,7 @@ from enhanced_oi_calculator import OpenInterestCalculator, MarketDataEnhancer
 # Configure Loguru logging
 logger.remove()  # Remove default handler
 logger.add(
-    "logs/fastapi_yahoo.log",
+    "logs/fastapi_nse.log",
     rotation="1 day",
     retention="30 days",
     level="INFO",
@@ -612,7 +612,7 @@ async def get_oi_chart_data():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "fastapi_yahoo:app", 
+        "fastapi_nse:app", 
         host="0.0.0.0", 
         port=8000, 
         reload=True,
