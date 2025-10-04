@@ -1,1044 +1,619 @@
 """
-NIFTY 50 Option Chain Analysis Web Application with Angel One SmartAPI
-A comprehensive web-based tool for analyzing NIFTY options with real-time data from Angel One,
-Greeks calculation, PCR analysis, and Max Pain calculation.
+NIFTY 50 Option Chain Analysis FastAPI Application with NSE India Data
+A comprehensive API for analyzing NIFTY options with real-time data from NSE India,
+Greeks calculation, portfolio analysis, and advanced options analytics.
 """
 
-from flask import Flask, render_template, jsonify, request, session
-import requests
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+from typing import Dict, List, Optional, Union
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from scipy.stats import norm
 import json
-import logging
-from typing import Dict, List, Tuple, Optional
 import time
-import pyotp
-import jwt
-import hashlib
 import os
-from config import config
-from nifty_greeks_calculator import EnhancedAngelSmartAPI, AdvancedGreeksCalculator, EnhancedNiftyDataFetcher
+from loguru import logger
+from nifty_greeks import NSEFinanceAPI, NiftyOptionsChain, GreeksCalculator, PortfolioGreeksCalculator
+from enhanced_oi_calculator import OpenInterestCalculator, MarketDataEnhancer
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Configure Loguru logging
+logger.remove()  # Remove default handler
+logger.add(
+    "logs/fastapi_nse.log",
+    rotation="1 day",
+    retention="30 days",
+    level="INFO",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
+    backtrace=True,
+    diagnose=True
+)
+logger.add(
+    "logs/error.log",
+    rotation="1 day", 
+    retention="30 days",
+    level="ERROR",
+    format="{time:YYYY-MM-DD HH:mm:ss} | {level} | {name}:{function}:{line} | {message}",
+    backtrace=True,
+    diagnose=True
+)
+# Console logging for development
+logger.add(
+    lambda msg: print(msg, end=""),
+    level="INFO",
+    format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | <level>{message}</level>"
+)
 
-app = Flask(__name__)
+# Initialize FastAPI app
+app = FastAPI(
+    title="NIFTY Options Greeks Analyzer - NSE India Edition",
+    description="Comprehensive NIFTY options analysis with real-time NSE India data",
+    version="4.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc"
+)
 
-# Load configuration
-env = os.environ.get('FLASK_ENV', 'development')
-app.config.from_object(config[env])
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# Enable sessions for credential storage
-app.secret_key = app.config['SECRET_KEY']
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all HTTP requests and responses"""
+    start_time = time.time()
+    
+    # Log request
+    logger.info(f">>> {request.method} {request.url}")
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate processing time
+    process_time = time.time() - start_time
+    
+    # Log response
+    logger.info(f"<<< {request.method} {request.url} - {response.status_code} - {process_time:.3f}s")
+    
+    # Add processing time to response headers
+    response.headers["X-Process-Time"] = str(process_time)
+    
+    return response
 
-class AngelOneConnector:
-    """Class to handle Angel One SmartAPI authentication and data fetching"""
-    
-    def __init__(self):
-        self.base_url = app.config['ANGEL_ONE_BASE_URL']
-        self.api_key = app.config['ANGEL_ONE_API_KEY']
-        self.secret_key = app.config['ANGEL_ONE_SECRET_KEY']
-        
-        # Use web credentials first, then fall back to environment variables
-        self.client_code = self.get_credential('client_code') or app.config.get('ANGEL_ONE_CLIENT_CODE')
-        self.pin = self.get_credential('pin') or app.config.get('ANGEL_ONE_PIN')
-        self.totp_secret = self.get_credential('totp_secret') or app.config.get('ANGEL_ONE_TOTP_SECRET')
-        
-        self.session = requests.Session()
-        self.jwt_token = None
-        self.refresh_token = None
-        self.feed_token = None
-        self.login_time = None
-        self.cache = {}
-        self.cache_timeout = app.config['CACHE_TIMEOUT']
-        
-        # Standard headers
-        self.headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-UserType': 'USER',
-            'X-SourceID': 'WEB',
-            'X-ClientLocalIP': app.config['CLIENT_LOCAL_IP'],
-            'X-ClientPublicIP': app.config['CLIENT_PUBLIC_IP'],
-            'X-MACAddress': app.config['MAC_ADDRESS'],
-            'X-PrivateKey': self.api_key
-        }
-        
-        logger.info("Angel One connector initialized")
-    
-    def get_credential(self, credential_type: str) -> Optional[str]:
-        """Get credential from session storage"""
-        try:
-            credentials = session.get('angel_one_credentials', {})
-            return credentials.get(credential_type)
-        except Exception:
-            return None
-    
-    def set_credentials(self, client_code: str, pin: str, totp_secret: str = None) -> bool:
-        """Set credentials in session storage"""
-        try:
-            session['angel_one_credentials'] = {
-                'client_code': client_code,
-                'pin': pin,
-                'totp_secret': totp_secret if totp_secret else None
-            }
-            
-            # Update instance variables
-            self.client_code = client_code
-            self.pin = pin
-            self.totp_secret = totp_secret
-            
-            logger.info("Angel One credentials updated from web interface")
-            return True
-        except Exception as e:
-            logger.error(f"Error setting credentials: {str(e)}")
-            return False
-    
-    def clear_credentials(self):
-        """Clear credentials from session storage"""
-        try:
-            if 'angel_one_credentials' in session:
-                del session['angel_one_credentials']
-            
-            # Clear instance variables
-            self.client_code = None
-            self.pin = None
-            self.totp_secret = None
-            
-            # Clear authentication tokens
-            self.jwt_token = None
-            self.refresh_token = None
-            self.feed_token = None
-            self.login_time = None
-            
-            # Clear session headers
-            if 'Authorization' in self.session.headers:
-                del self.session.headers['Authorization']
-            
-            logger.info("Angel One credentials cleared")
-        except Exception as e:
-            logger.error(f"Error clearing credentials: {str(e)}")
-    
-    def has_credentials(self) -> bool:
-        """Check if required credentials are available"""
-        return bool(self.client_code and self.pin)
-        
-    def generate_totp(self) -> Optional[str]:
-        """Generate TOTP using the secret key"""
-        if not self.totp_secret:
-            logger.warning("TOTP secret not configured")
-            return None
-        
-        try:
-            totp = pyotp.TOTP(self.totp_secret)
-            current_totp = totp.now()
-            logger.info("TOTP generated successfully")
-            return current_totp
-        except Exception as e:
-            logger.error(f"Error generating TOTP: {str(e)}")
-            return None
-    
-    def login_with_manual_totp(self, client_code: str, password: str, totp: str) -> bool:
-        """Login with manually provided TOTP (for enhanced integration)"""
-        if not client_code or not password or not totp:
-            logger.error("All credentials are required for manual TOTP login")
-            return False
-        
-        try:
-            # Prepare login payload
-            login_data = {
-                "clientcode": client_code,
-                "password": password,
-                "totp": totp
-            }
-            
-            headers = self.headers.copy()
-            
-            logger.info("Attempting Angel One login with manual TOTP...")
-            response = self.session.post(
-                app.config['ANGEL_ONE_LOGIN_URL'],
-                json=login_data,
-                headers=headers,
-                timeout=app.config['REQUEST_TIMEOUT']
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('status'):
-                    data = result.get('data', {})
-                    self.jwt_token = data.get('jwtToken')
-                    self.refresh_token = data.get('refreshToken')
-                    self.feed_token = data.get('feedToken')
-                    self.login_time = datetime.now()
-                    
-                    # Update session headers with JWT token
-                    self.session.headers.update({
-                        'Authorization': f'Bearer {self.jwt_token}'
-                    })
-                    
-                    # Store credentials for enhanced API usage
-                    self.client_code = client_code
-                    self.pin = password
-                    
-                    logger.info("Angel One login with manual TOTP successful")
-                    return True
-                else:
-                    logger.error(f"Angel One login failed: {result.get('message', 'Unknown error')}")
-                    return False
-            else:
-                logger.error(f"Angel One login HTTP error: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error during Angel One login with manual TOTP: {str(e)}")
-            return False
-    
-    def login(self) -> bool:
-        """Authenticate with Angel One SmartAPI"""
-        # Refresh credentials from session in case they were updated
-        self.client_code = self.get_credential('client_code') or app.config.get('ANGEL_ONE_CLIENT_CODE')
-        self.pin = self.get_credential('pin') or app.config.get('ANGEL_ONE_PIN')
-        self.totp_secret = self.get_credential('totp_secret') or app.config.get('ANGEL_ONE_TOTP_SECRET')
-        
-        if not self.client_code or not self.pin:
-            logger.error("Angel One credentials not configured")
-            return False
-        
-        try:
-            # Generate TOTP
-            totp = self.generate_totp()
-            if not totp:
-                logger.error("Failed to generate TOTP")
-                return False
-            
-            # Prepare login payload
-            login_data = {
-                "clientcode": self.client_code,
-                "password": self.pin,
-                "totp": totp
-            }
-            
-            headers = self.headers.copy()
-            
-            logger.info("Attempting Angel One login...")
-            response = self.session.post(
-                app.config['ANGEL_ONE_LOGIN_URL'],
-                json=login_data,
-                headers=headers,
-                timeout=app.config['REQUEST_TIMEOUT']
-            )
-            
-            if response.status_code == 200:
-                result = response.json()
-                if result.get('status'):
-                    data = result.get('data', {})
-                    self.jwt_token = data.get('jwtToken')
-                    self.refresh_token = data.get('refreshToken')
-                    self.feed_token = data.get('feedToken')
-                    self.login_time = datetime.now()
-                    
-                    # Update session headers with JWT token
-                    self.session.headers.update({
-                        'Authorization': f'Bearer {self.jwt_token}'
-                    })
-                    
-                    logger.info("Angel One login successful")
-                    return True
-                else:
-                    logger.error(f"Angel One login failed: {result.get('message', 'Unknown error')}")
-                    return False
-            else:
-                logger.error(f"Angel One login HTTP error: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error during Angel One login: {str(e)}")
-            return False
-    
-    def is_token_valid(self) -> bool:
-        """Check if JWT token is still valid"""
-        if not self.jwt_token or not self.login_time:
-            return False
-        
-        try:
-            # Decode JWT to check expiry
-            decoded = jwt.decode(self.jwt_token, options={"verify_signature": False})
-            exp_timestamp = decoded.get('exp', 0)
-            current_timestamp = int(time.time())
-            
-            # Check if token expires within the threshold
-            return (exp_timestamp - current_timestamp) > app.config['JWT_REFRESH_THRESHOLD']
-        except Exception as e:
-            logger.error(f"Error checking token validity: {str(e)}")
-            return False
-    
-    def ensure_authenticated(self) -> bool:
-        """Ensure we have a valid authentication token"""
-        if self.is_token_valid():
-            return True
-        
-        logger.info("Token invalid or expired, attempting re-authentication...")
-        return self.login()
-    
-    def fetch_option_greeks(self, symbol: str = "NIFTY") -> Optional[Dict]:
-        """Fetch option Greeks data from Angel One SmartAPI"""
-        cache_key = f"{symbol}_{int(time.time() // self.cache_timeout)}"
-        
-        if cache_key in self.cache:
-            logger.info("Returning cached Angel One data")
-            return self.cache[cache_key]
-        
-        if not self.ensure_authenticated():
-            logger.error("Failed to authenticate with Angel One")
-            return None
-        
-        try:
-            # Get current NIFTY price first (you might need to implement this)
-            # For now, we'll use a placeholder
-            current_nifty = 24350.75  # This should be fetched from Angel One
-            
-            # Calculate strike range
-            base_strike = int(current_nifty // 50) * 50
-            strikes = [base_strike + (i * 50) for i in range(-15, 16)]
-            
-            # Get current month expiry (simplified - should be calculated properly)
-            today = datetime.now()
-            next_thursday = today + timedelta(days=(3 - today.weekday()) % 7)
-            if next_thursday <= today:
-                next_thursday += timedelta(days=7)
-            expiry = next_thursday.strftime("%d%b%Y").upper()
-            
-            all_option_data = []
-            
-            # Fetch data for each strike
-            for strike in strikes:
-                # Call option data
-                call_payload = {
-                    "exchange": "NFO",
-                    "tradingsymbol": f"NIFTY{expiry}{strike}CE",
-                    "symboltoken": "",  # You might need to get this from Angel One
-                }
-                
-                # Put option data
-                put_payload = {
-                    "exchange": "NFO",
-                    "tradingsymbol": f"NIFTY{expiry}{strike}PE",
-                    "symboltoken": "",  # You might need to get this from Angel One
-                }
-                
-                # Note: Angel One might require different API calls for option Greeks
-                # This is a simplified implementation
-                
-            logger.info("Angel One API call successful")
-            
-            # For now, return mock data with Angel One structure
-            mock_data = self.get_mock_angel_one_data(current_nifty)
-            self.cache[cache_key] = mock_data
-            return mock_data
-            
-        except Exception as e:
-            logger.error(f"Error fetching option Greeks from Angel One: {str(e)}")
-            return None
-    
-    def get_mock_angel_one_data(self, current_nifty: float) -> Dict:
-        """Generate Angel One compatible mock data"""
-        # Generate expiry dates
-        today = datetime.now()
-        next_thursday = today + timedelta(days=(3 - today.weekday()) % 7)
-        if next_thursday <= today:
-            next_thursday += timedelta(days=7)
-        
-        expiry_dates = [
-            next_thursday.strftime("%d-%b-%Y"),
-            (next_thursday + timedelta(days=7)).strftime("%d-%b-%Y"),
-            (next_thursday + timedelta(days=14)).strftime("%d-%b-%Y")
-        ]
-        
-        mock_data = {
-            'status': True,
-            'message': 'SUCCESS',
-            'data': {
-                'underlyingValue': current_nifty,
-                'expiryDates': expiry_dates,
-                'optionGreeks': []
-            }
-        }
-        
-        # Generate realistic option data for strikes around current level
-        base_strike = int(current_nifty // 50) * 50
-        
-        for i in range(-15, 16):
-            strike = base_strike + (i * 50)
-            distance = abs(strike - current_nifty)
-            
-            # Calculate realistic values
-            call_oi = max(1000, int(100000 * np.exp(-distance / 500))) if strike >= current_nifty - 200 else 0
-            put_oi = max(1000, int(100000 * np.exp(-distance / 500))) if strike <= current_nifty + 200 else 0
-            
-            # Add randomness
-            call_oi += np.random.randint(-call_oi//4, call_oi//4) if call_oi > 0 else 0
-            put_oi += np.random.randint(-put_oi//4, put_oi//4) if put_oi > 0 else 0
-            
-            # Call option
-            if call_oi > 0:
-                intrinsic_call = max(0, current_nifty - strike)
-                time_value = max(5, 150 * np.exp(-distance / 300))
-                call_price = intrinsic_call + time_value
-                call_iv = 12.5 + distance / 100
-                
-                # Calculate Greeks
-                time_to_expiry = 30 / 365.0  # Simplified
-                delta, gamma, theta, vega, rho = self.calculate_greeks(
-                    'call', current_nifty, strike, time_to_expiry, 0.065, call_iv / 100
-                )
-                
-                call_data = {
-                    'optionType': 'CE',
-                    'strikePrice': strike,
-                    'expiryDate': expiry_dates[0],
-                    'openInterest': int(call_oi),
-                    'changeinOpenInterest': np.random.randint(-call_oi//10, call_oi//10),
-                    'totalTradedVolume': max(0, int(call_oi * 0.1)),
-                    'impliedVolatility': round(call_iv, 2),
-                    'lastPrice': round(call_price, 2),
-                    'change': round(np.random.uniform(-20, 20), 2),
-                    'bidPrice': round(call_price * 0.98, 2),
-                    'askPrice': round(call_price * 1.02, 2),
-                    'delta': round(delta, 4),
-                    'gamma': round(gamma, 6),
-                    'theta': round(theta, 4),
-                    'vega': round(vega, 4),
-                    'rho': round(rho, 4)
-                }
-                mock_data['data']['optionGreeks'].append(call_data)
-            
-            # Put option
-            if put_oi > 0:
-                intrinsic_put = max(0, strike - current_nifty)
-                time_value = max(5, 150 * np.exp(-distance / 300))
-                put_price = intrinsic_put + time_value
-                put_iv = 12.5 + distance / 100
-                
-                # Calculate Greeks
-                time_to_expiry = 30 / 365.0  # Simplified
-                delta, gamma, theta, vega, rho = self.calculate_greeks(
-                    'put', current_nifty, strike, time_to_expiry, 0.065, put_iv / 100
-                )
-                
-                put_data = {
-                    'optionType': 'PE',
-                    'strikePrice': strike,
-                    'expiryDate': expiry_dates[0],
-                    'openInterest': int(put_oi),
-                    'changeinOpenInterest': np.random.randint(-put_oi//10, put_oi//10),
-                    'totalTradedVolume': max(0, int(put_oi * 0.1)),
-                    'impliedVolatility': round(put_iv, 2),
-                    'lastPrice': round(put_price, 2),
-                    'change': round(np.random.uniform(-20, 20), 2),
-                    'bidPrice': round(put_price * 0.98, 2),
-                    'askPrice': round(put_price * 1.02, 2),
-                    'delta': round(delta, 4),
-                    'gamma': round(gamma, 6),
-                    'theta': round(theta, 4),
-                    'vega': round(vega, 4),
-                    'rho': round(rho, 4)
-                }
-                mock_data['data']['optionGreeks'].append(put_data)
-        
-        logger.info("Generated Angel One compatible mock data")
-        return mock_data
-    
-    def calculate_greeks(self, option_type: str, S: float, K: float, T: float, 
-                        r: float, sigma: float, q: float = 0) -> Tuple[float, ...]:
-        """Calculate option Greeks using Black-Scholes model"""
-        if T <= 0 or sigma <= 0:
-            return (0, 0, 0, 0, 0)
-        
-        try:
-            d1 = (np.log(S / K) + (r - q + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
-            d2 = d1 - sigma * np.sqrt(T)
-            
-            if option_type.lower() == 'call':
-                delta = np.exp(-q * T) * norm.cdf(d1)
-                theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) 
-                        - r * K * np.exp(-r * T) * norm.cdf(d2) 
-                        + q * S * np.exp(-q * T) * norm.cdf(d1))
-                rho = K * T * np.exp(-r * T) * norm.cdf(d2) / 100
-            else:  # put
-                delta = -np.exp(-q * T) * norm.cdf(-d1)
-                theta = (-S * np.exp(-q * T) * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) 
-                        + r * K * np.exp(-r * T) * norm.cdf(-d2) 
-                        - q * S * np.exp(-q * T) * norm.cdf(-d1))
-                rho = -K * T * np.exp(-r * T) * norm.cdf(-d2) / 100
-            
-            gamma = np.exp(-q * T) * norm.pdf(d1) / (S * sigma * np.sqrt(T))
-            vega = S * np.exp(-q * T) * norm.pdf(d1) * np.sqrt(T) / 100
-            theta = theta / 365  # Daily theta
-            
-            return (delta, gamma, theta, vega, rho)
-        except Exception as e:
-            logger.error(f"Error calculating Greeks: {str(e)}")
-            return (0, 0, 0, 0, 0)
+# Templates
+templates = Jinja2Templates(directory="templates")
 
-class OptionChainAnalyzer:
-    """Class to analyze option chain data from Angel One"""
-    
-    def __init__(self):
-        self.connector = AngelOneConnector()
-    
-    def analyze_option_chain(self, data: Dict) -> Dict:
-        """Analyze option chain data from Angel One and calculate metrics"""
-        try:
-            if not data or not data.get('status'):
-                return {'success': False, 'error': 'Invalid data from Angel One'}
-            
-            angel_data = data['data']
-            underlying_value = angel_data['underlyingValue']
-            expiry_dates = angel_data['expiryDates']
-            current_expiry = expiry_dates[0]
-            option_greeks = angel_data['optionGreeks']
-            
-            # Separate calls and puts
-            calls_data = []
-            puts_data = []
-            
-            for option in option_greeks:
-                if option['expiryDate'] == current_expiry:
-                    strike = option['strikePrice']
-                    
-                    option_data = {
-                        'strike': strike,
-                        'oi': option.get('openInterest', 0),
-                        'change_oi': option.get('changeinOpenInterest', 0),
-                        'volume': option.get('totalTradedVolume', 0),
-                        'iv': option.get('impliedVolatility', 0),
-                        'ltp': option.get('lastPrice', 0),
-                        'change': option.get('change', 0),
-                        'bid': option.get('bidPrice', 0),
-                        'ask': option.get('askPrice', 0),
-                        'delta': option.get('delta', 0),
-                        'gamma': option.get('gamma', 0),
-                        'theta': option.get('theta', 0),
-                        'vega': option.get('vega', 0),
-                        'rho': option.get('rho', 0)
-                    }
-                    
-                    if option['optionType'] == 'CE':
-                        calls_data.append(option_data)
-                    else:  # PE
-                        puts_data.append(option_data)
-            
-            # Create DataFrames
-            df_calls = pd.DataFrame(calls_data)
-            df_puts = pd.DataFrame(puts_data)
-            
-            if df_calls.empty or df_puts.empty:
-                return {'success': False, 'error': 'No option data available'}
-            
-            # Merge on strike
-            df = pd.merge(df_calls, df_puts, on='strike', suffixes=('_call', '_put'))
-            
-            # Calculate metrics
-            df['pcr_oi'] = df['oi_put'] / df['oi_call'].replace(0, np.nan)
-            df['pcr_volume'] = df['volume_put'] / df['volume_call'].replace(0, np.nan)
-            
-            # Find ATM strike
-            atm_strike_idx = (df['strike'] - underlying_value).abs().idxmin()
-            atm_strike = df.loc[atm_strike_idx, 'strike']
-            
-            # Calculate Max Pain
-            max_pain_data = []
-            for strike in df['strike']:
-                call_pain = sum(max(0, strike - s) * oi for s, oi in 
-                               zip(df['strike'], df['oi_call']) if s < strike)
-                put_pain = sum(max(0, s - strike) * oi for s, oi in 
-                              zip(df['strike'], df['oi_put']) if s > strike)
-                total_pain = call_pain + put_pain
-                max_pain_data.append({'strike': strike, 'pain': total_pain})
-            
-            max_pain_df = pd.DataFrame(max_pain_data)
-            max_pain_strike = max_pain_df.loc[max_pain_df['pain'].idxmin(), 'strike']
-            
-            # Calculate summary metrics
-            total_call_oi = df['oi_call'].sum()
-            total_put_oi = df['oi_put'].sum()
-            total_pcr = total_put_oi / total_call_oi if total_call_oi > 0 else 0
-            
-            # Find support and resistance levels
-            support_levels = df.nlargest(3, 'oi_put')[['strike', 'oi_put']].to_dict('records')
-            resistance_levels = df.nlargest(3, 'oi_call')[['strike', 'oi_call']].to_dict('records')
-            
-            return {
-                'success': True,
-                'timestamp': datetime.now().isoformat(),
-                'underlying_value': underlying_value,
-                'expiry_date': current_expiry,
-                'atm_strike': atm_strike,
-                'max_pain_strike': max_pain_strike,
-                'total_call_oi': int(total_call_oi),
-                'total_put_oi': int(total_put_oi),
-                'total_pcr': round(total_pcr, 4),
-                'support_levels': support_levels,
-                'resistance_levels': resistance_levels,
-                'option_data': df.fillna(0).to_dict('records'),
-                'available_expiries': expiry_dates
-            }
-            
-        except Exception as e:
-            logger.error(f"Error analyzing option chain: {str(e)}")
-            return {'success': False, 'error': str(e)}
+# Pydantic models for request/response
+class ImpliedVolatilityRequest(BaseModel):
+    option_price: float = Field(..., gt=0, description="Current option price")
+    spot_price: float = Field(..., gt=0, description="Current spot price")
+    strike_price: float = Field(..., gt=0, description="Strike price")
+    days_to_expiry: int = Field(..., gt=0, description="Days to expiry")
+    option_type: str = Field(..., pattern="^(call|put)$", description="Option type")
+    risk_free_rate: float = Field(0.065, description="Risk-free rate")
 
-# Initialize analyzer
-analyzer = OptionChainAnalyzer()
+class Position(BaseModel):
+    strike: float = Field(..., description="Strike price")
+    quantity: int = Field(..., description="Position quantity")
+    option_type: str = Field(..., pattern="^(call|put)$", description="Option type")
+    days_to_expiry: int = Field(30, description="Days to expiry")
+    volatility: float = Field(0.20, description="Implied volatility")
 
-@app.route('/')
-def index():
+class PortfolioGreeksRequest(BaseModel):
+    positions: List[Position] = Field(..., description="List of positions")
+    spot_price: Optional[float] = Field(None, description="Current spot price (will fetch if not provided)")
+
+class OptionsChainRequest(BaseModel):
+    spot_price: Optional[float] = Field(None, description="Current spot price (will fetch if not provided)")
+    expiry_date: Optional[str] = Field(None, description="Expiry date (YYYY-MM-DD format, defaults to next Thursday)")
+    volatility: Optional[float] = Field(None, description="Implied volatility (will calculate if not provided)")
+    risk_free_rate: float = Field(0.065, description="Risk-free rate")
+    num_strikes: int = Field(31, ge=5, le=101, description="Number of strikes to generate")
+    atm_only: bool = Field(False, description="Generate only 5 strikes above and 5 below ATM (11 total)")
+
+class GreeksResponse(BaseModel):
+    success: bool
+    data: Optional[List[Dict]] = None
+    analytics: Optional[Dict] = None
+    metadata: Optional[Dict] = None
+    data_source: str = "NSE India"
+    timestamp: str
+    error: Optional[str] = None
+
+class StatusResponse(BaseModel):
+    status: str
+    data_source: str
+    timestamp: str
+    api_version: str
+    endpoints_available: int
+
+# Initialize components
+nse_api = NSEFinanceAPI()
+options_chain = NiftyOptionsChain()
+greeks_calc = GreeksCalculator()
+portfolio_calc = PortfolioGreeksCalculator()
+oi_calculator = OpenInterestCalculator()
+market_enhancer = MarketDataEnhancer()
+
+@app.get("/", response_class=HTMLResponse)
+async def root(request: Request):
     """Serve the main dashboard"""
-    return render_template('index.html')
-
-@app.route('/api/option-chain')
-def get_option_chain():
-    """API endpoint to get analyzed option chain data from Angel One"""
     try:
-        data = analyzer.connector.fetch_option_greeks()
-        if data:
-            analysis = analyzer.analyze_option_chain(data)
-            # Add detailed data source information
-            if analyzer.connector.jwt_token:
-                analysis['data_source'] = 'angel_one_live'
-                analysis['connection_status'] = 'connected'
-                analysis['status_message'] = 'Live data from Angel One SmartAPI'
-            elif analyzer.connector.has_credentials():
-                analysis['data_source'] = 'angel_one_mock'
-                analysis['connection_status'] = 'credentials_set'
-                analysis['status_message'] = 'Using demo data - Click "Save & Connect" to get live data'
-            else:
-                analysis['data_source'] = 'angel_one_mock'
-                analysis['connection_status'] = 'no_credentials'
-                analysis['status_message'] = 'Using demo data - Configure Angel One credentials to get live data'
-            return jsonify(analysis)
-        else:
-            if not analyzer.connector.has_credentials():
-                return jsonify({
-                    'success': False,
-                    'error': 'Angel One credentials not configured',
-                    'connection_status': 'no_credentials',
-                    'status_message': 'Configure Angel One credentials to connect'
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'Failed to fetch data from Angel One SmartAPI',
-                    'connection_status': 'connection_failed',
-                    'status_message': 'Cannot connect to Angel One SmartAPI - Check credentials'
-                })
+        # Get current market data for the dashboard
+        spot_price = nse_api.get_nifty_price()
+        
+        context = {
+            "request": request,
+            "title": "NIFTY Options Greeks Analyzer",
+            "version": "4.0.0",
+            "data_source": "NSE India",
+            "spot_price": spot_price,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
+        
+        logger.info("Dashboard page requested")
+        return templates.TemplateResponse("index.html", context)
+        
     except Exception as e:
-        logger.error(f"API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'connection_status': 'error',
-            'status_message': f'Error: {str(e)}'
-        })
+        logger.error(f"Dashboard error: {str(e)}")
+        context = {
+            "request": request,
+            "title": "NIFTY Options Greeks Analyzer",
+            "error": "Could not load dashboard data"
+        }
+        return templates.TemplateResponse("index.html", context)
 
-@app.route('/api/angel-one/login', methods=['POST'])
-def angel_one_login():
-    """Manual login endpoint for Angel One"""
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint for Docker"""
+    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+
+@app.get("/api/status", response_model=StatusResponse)
+async def get_status():
+    """Get API status and health check"""
     try:
-        success = analyzer.connector.login()
-        if success:
-            return jsonify({
-                'success': True,
-                'message': 'Successfully logged into Angel One SmartAPI',
-                'login_time': analyzer.connector.login_time.isoformat() if analyzer.connector.login_time else None
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to login to Angel One SmartAPI'
-            })
-    except Exception as e:
-        logger.error(f"Login API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
-
-@app.route('/api/angel-one/status')
-def angel_one_status():
-    """Get Angel One connection status"""
-    try:
-        is_authenticated = analyzer.connector.is_token_valid()
-        has_credentials = analyzer.connector.has_credentials()
-        credentials_source = 'web' if analyzer.connector.get_credential('client_code') else 'environment'
+        # Test NSE India connection
+        spot_price = nse_api.get_nifty_price()
+        status = "healthy" if spot_price else "degraded"
         
-        return jsonify({
-            'authenticated': is_authenticated,
-            'login_time': analyzer.connector.login_time.isoformat() if analyzer.connector.login_time else None,
-            'credentials_configured': has_credentials,
-            'credentials_source': credentials_source if has_credentials else None,
-            'has_totp_secret': bool(analyzer.connector.totp_secret),
-            'client_code_masked': analyzer.connector.client_code[:4] + '****' if analyzer.connector.client_code and len(analyzer.connector.client_code) > 4 else None
-        })
-    except Exception as e:
-        logger.error(f"Status API error: {str(e)}")
-        return jsonify({
-            'authenticated': False,
-            'error': str(e)
-        })
-
-@app.route('/api/angel-one/set-credentials', methods=['POST'])
-def set_angel_one_credentials():
-    """Set Angel One credentials from web interface"""
-    try:
-        data = request.get_json()
-        
-        if not data:
-            return jsonify({
-                'success': False,
-                'error': 'No data provided'
-            }), 400
-        
-        client_code = data.get('client_code', '').strip()
-        pin = data.get('pin', '').strip()
-        totp_secret = data.get('totp_secret', '').strip()
-        
-        # Validate required fields
-        if not client_code or not pin:
-            return jsonify({
-                'success': False,
-                'error': 'Client code and PIN are required'
-            }), 400
-        
-        # Set credentials in connector
-        success = analyzer.connector.set_credentials(client_code, pin, totp_secret or None)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': 'Credentials set successfully',
-                'has_totp_secret': bool(totp_secret)
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to set credentials'
-            }), 500
-            
-    except Exception as e:
-        logger.error(f"Set credentials API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/angel-one/clear-credentials', methods=['POST'])
-def clear_angel_one_credentials():
-    """Clear Angel One credentials"""
-    try:
-        analyzer.connector.clear_credentials()
-        return jsonify({
-            'success': True,
-            'message': 'Credentials cleared successfully'
-        })
-    except Exception as e:
-        logger.error(f"Clear credentials API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/angel-one/check-credentials')
-def check_angel_one_credentials():
-    """Check if Angel One credentials are configured"""
-    try:
-        has_credentials = analyzer.connector.has_credentials()
-        credentials_source = 'web' if analyzer.connector.get_credential('client_code') else 'environment'
-        
-        return jsonify({
-            'has_credentials': has_credentials,
-            'credentials_source': credentials_source,
-            'has_totp_secret': bool(analyzer.connector.totp_secret),
-            'client_code': analyzer.connector.client_code[:4] + '****' if analyzer.connector.client_code else None
-        })
-    except Exception as e:
-        logger.error(f"Check credentials API error: {str(e)}")
-        return jsonify({
-            'has_credentials': False,
-            'error': str(e)
-        })
-
-@app.route('/api/health')
-def health_check():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy', 
-        'timestamp': datetime.now().isoformat(),
-        'api_provider': 'Angel One SmartAPI'
-    })
-
-@app.route('/api/enhanced-greeks')
-def get_enhanced_greeks():
-    """API endpoint to get enhanced Greeks data using the advanced calculator"""
-    try:
-        # Get query parameters
-        volatility = float(request.args.get('volatility', 0.20))
-        include_analytics = request.args.get('analytics', 'true').lower() == 'true'
-        
-        # Initialize enhanced API if we have credentials
-        if analyzer.connector.has_credentials() and analyzer.connector.is_token_valid():
-            # Create enhanced API instance using existing credentials
-            enhanced_api = EnhancedAngelSmartAPI(
-                analyzer.connector.api_key, 
-                analyzer.connector.secret_key
-            )
-            
-            # Transfer authentication details
-            enhanced_api.access_token = analyzer.connector.jwt_token
-            enhanced_api.refresh_token = analyzer.connector.refresh_token
-            enhanced_api.client_code = analyzer.connector.client_code
-            enhanced_api.session.headers.update({
-                'Authorization': f'Bearer {enhanced_api.access_token}'
-            })
-            
-            # Initialize enhanced fetcher
-            enhanced_fetcher = EnhancedNiftyDataFetcher(enhanced_api)
-            
-        else:
-            # Use without authentication for demo data
-            enhanced_fetcher = EnhancedNiftyDataFetcher()
-        
-        # Fetch enhanced data
-        result = enhanced_fetcher.get_live_nifty_data_with_greeks(
-            volatility=volatility,
-            include_analytics=include_analytics
+        return StatusResponse(
+            status=status,
+            data_source="NSE India",
+            timestamp=datetime.now().isoformat(),
+            api_version="4.0.0",
+            endpoints_available=8
         )
         
-        if result:
-            if isinstance(result, dict) and 'data' in result:
-                # Convert DataFrame to dict for JSON serialization
-                result['data'] = result['data'].to_dict('records')
-                
-                # Add connection status
-                result['connection_status'] = 'connected' if analyzer.connector.is_token_valid() else 'demo'
-                result['data_source'] = 'angel_one_enhanced'
-                result['status_message'] = 'Enhanced Greeks calculation with live data' if analyzer.connector.is_token_valid() else 'Enhanced Greeks calculation with demo data'
-                
-                return jsonify({
-                    'success': True,
-                    **result
-                })
-            else:
-                # Simple DataFrame result
-                return jsonify({
-                    'success': True,
-                    'data': result.to_dict('records'),
-                    'connection_status': 'connected' if analyzer.connector.is_token_valid() else 'demo',
-                    'data_source': 'angel_one_enhanced',
-                    'status_message': 'Enhanced Greeks calculation'
-                })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to fetch enhanced Greeks data',
-                'connection_status': 'error',
-                'status_message': 'Error fetching enhanced Greeks data'
-            })
-            
     except Exception as e:
-        logger.error(f"Enhanced Greeks API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e),
-            'connection_status': 'error',
-            'status_message': f'Enhanced Greeks error: {str(e)}'
-        })
+        logger.error(f"Status check error: {str(e)}")
+        return StatusResponse(
+            status="error",
+            data_source="NSE India",
+            timestamp=datetime.now().isoformat(),
+            api_version="3.0.0",
+            endpoints_available=8
+        )
 
-@app.route('/api/angel-one/login-manual', methods=['POST'])
-def angel_one_login_manual():
-    """Manual login endpoint with user-provided TOTP"""
+@app.get("/api/nifty-price")
+async def get_nifty_price():
+    """Get current NIFTY 50 price"""
     try:
-        data = request.get_json()
+        logger.info("NIFTY price requested")
+        spot_price = nse_api.get_nifty_price()
         
-        if not data:
-            return jsonify({
-                'success': False,
-                'error': 'No data provided'
-            }), 400
+        if spot_price is None:
+            raise HTTPException(status_code=503, detail="Could not fetch NIFTY price")
         
-        client_code = data.get('client_code', '').strip()
-        password = data.get('password', '').strip()
-        totp = data.get('totp', '').strip()
+        return {
+            "success": True,
+            "data": {
+                "spot_price": spot_price,
+                "symbol": "NIFTY 50",
+                "source": "NSE India"
+            },
+            "timestamp": datetime.now().isoformat()
+        }
         
-        # Validate required fields
-        if not client_code or not password or not totp:
-            return jsonify({
-                'success': False,
-                'error': 'Client code, password, and TOTP are required'
-            }), 400
-        
-        # Store credentials first
-        analyzer.connector.set_credentials(client_code, password)
-        
-        # Attempt login with manual TOTP
-        success = analyzer.connector.login_with_manual_totp(client_code, password, totp)
-        
-        if success:
-            return jsonify({
-                'success': True,
-                'message': 'Successfully logged into Angel One SmartAPI with manual TOTP',
-                'login_time': analyzer.connector.login_time.isoformat() if analyzer.connector.login_time else None,
-                'enhanced_features_available': True
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to login to Angel One SmartAPI with provided TOTP'
-            })
-            
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Manual login API error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        logger.error(f"Error fetching NIFTY price: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-@app.route('/api/calculate-implied-volatility', methods=['POST'])
-def calculate_implied_volatility():
-    """Calculate implied volatility for given option parameters"""
+@app.get("/api/historical-volatility")
+async def get_historical_volatility(days: int = 30):
+    """Get historical volatility for NIFTY"""
     try:
-        data = request.get_json()
+        logger.info(f"Historical volatility requested for {days} days")
         
-        if not data:
-            return jsonify({
-                'success': False,
-                'error': 'No data provided'
-            }), 400
+        if days < 5 or days > 252:
+            raise HTTPException(status_code=400, detail="Days must be between 5 and 252")
         
-        # Extract parameters
-        option_price = float(data.get('option_price', 0))
-        spot_price = float(data.get('spot_price', 0))
-        strike_price = float(data.get('strike_price', 0))
-        days_to_expiry = int(data.get('days_to_expiry', 30))
-        option_type = data.get('option_type', 'call').lower()
-        risk_free_rate = float(data.get('risk_free_rate', 0.065))
+        volatility = nse_api.calculate_historical_volatility(days)
         
-        if option_price <= 0 or spot_price <= 0 or strike_price <= 0:
-            return jsonify({
-                'success': False,
-                'error': 'All price parameters must be positive'
-            }), 400
+        return {
+            "success": True,
+            "data": {
+                "volatility": volatility,
+                "volatility_percent": round(volatility * 100, 2),
+                "period_days": days,
+                "annualized": True
+            },
+            "timestamp": datetime.now().isoformat()
+        }
         
-        # Calculate time to expiry
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating volatility: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/options-chain", response_model=GreeksResponse)
+async def generate_options_chain(request: OptionsChainRequest):
+    """Generate complete NIFTY options chain with Greeks and Enhanced OI Analysis"""
+    try:
+        logger.info("Enhanced options chain generation requested")
+        
+        # Parse expiry date if provided
+        expiry_date = None
+        if request.expiry_date:
+            try:
+                expiry_date = datetime.strptime(request.expiry_date, "%Y-%m-%d")
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid expiry date format. Use YYYY-MM-DD")
+        
+        # Generate base options chain
+        df = options_chain.generate_options_chain(
+            spot_price=request.spot_price,
+            expiry_date=expiry_date,
+            volatility=request.volatility,
+            risk_free_rate=request.risk_free_rate,
+            num_strikes=request.num_strikes,
+            atm_only=request.atm_only
+        )
+        
+        # Convert DataFrame to list of dictionaries
+        options_data = df.to_dict('records')
+        
+        # Get spot price and volatility for enhancements
+        spot_price = float(df.iloc[0]['spot_price'])
+        volatility = float(df.iloc[0]['implied_volatility'])
+        
+        # Enhance options data with realistic OI and market data
+        logger.info("Enhancing options data with realistic Open Interest patterns")
+        enhanced_options_data = market_enhancer.enhance_options_data(
+            options_data, spot_price, volatility
+        )
+        
+        # Calculate comprehensive analytics including OI analysis
+        logger.info("Calculating comprehensive market analytics")
+        comprehensive_analytics = market_enhancer.calculate_comprehensive_analytics(
+            enhanced_options_data, spot_price
+        )
+        
+        # Use comprehensive analytics as analysis
+        analysis = comprehensive_analytics
+        
+        metadata = {
+            "total_options": int(len(enhanced_options_data)),
+            "spot_price": spot_price,
+            "expiry_date": str(df.iloc[0]['expiry_date']),
+            "days_to_expiry": int(df.iloc[0]['days_to_expiry']),
+            "implied_volatility": volatility,
+            "risk_free_rate": float(request.risk_free_rate),
+            "strikes_range": {
+                "min": float(df['strike'].min()),
+                "max": float(df['strike'].max()),
+                "count": int(len(df['strike'].unique()))
+            },
+            "oi_enhancement": "Theoretical OI patterns based on market behavior",
+            "data_features": [
+                "Theoretical Option Pricing (Black-Scholes)",
+                "Complete Greeks Calculation",
+                "Realistic Open Interest Patterns", 
+                "Max Pain Analysis",
+                "Support/Resistance Identification",
+                "Put-Call Ratio Analysis"
+            ]
+        }
+        
+        logger.success(f"Generated enhanced options chain with {len(enhanced_options_data)} options and comprehensive OI analysis")
+        
+        return GreeksResponse(
+            success=True,
+            data=enhanced_options_data,
+            analytics=analysis,
+            metadata=metadata,
+            data_source="NSE India + Enhanced OI Analysis",
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating options chain: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/calculate-implied-volatility")
+async def calculate_implied_volatility(request: ImpliedVolatilityRequest):
+    """Calculate implied volatility from option price"""
+    try:
+        logger.info("Implied volatility calculation requested")
+        
+        time_to_expiry = request.days_to_expiry / 365.0
+        
+        implied_vol = greeks_calc.calculate_implied_volatility(
+            option_price=request.option_price,
+            S=request.spot_price,
+            K=request.strike_price,
+            T=time_to_expiry,
+            r=request.risk_free_rate,
+            option_type=request.option_type.lower()
+        )
+        
+        return {
+            "success": True,
+            "data": {
+                "implied_volatility": implied_vol,
+                "implied_volatility_percent": round(implied_vol * 100, 2),
+                "option_price": request.option_price,
+                "spot_price": request.spot_price,
+                "strike_price": request.strike_price,
+                "days_to_expiry": request.days_to_expiry,
+                "option_type": request.option_type.upper()
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error calculating implied volatility: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/portfolio-greeks")
+async def calculate_portfolio_greeks(request: PortfolioGreeksRequest):
+    """Calculate portfolio-level Greeks"""
+    try:
+        logger.info(f"Portfolio Greeks calculation requested for {len(request.positions)} positions")
+        
+        # Get spot price if not provided
+        spot_price = request.spot_price
+        if spot_price is None:
+            spot_price = nse_api.get_nifty_price()
+            if spot_price is None:
+                raise HTTPException(status_code=503, detail="Could not fetch current NIFTY price")
+        
+        # Convert positions to list of dictionaries
+        positions = [pos.dict() for pos in request.positions]
+        
+        # Calculate portfolio Greeks
+        result = portfolio_calc.calculate_portfolio_greeks(positions, spot_price)
+        
+        logger.success(f"Calculated portfolio Greeks for {len(positions)} positions")
+        
+        return {
+            "success": True,
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error calculating portfolio Greeks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/option-greeks")
+async def calculate_single_option_greeks(
+    spot_price: float,
+    strike_price: float,
+    days_to_expiry: int,
+    option_type: str,
+    volatility: float = 0.20,
+    risk_free_rate: float = 0.065
+):
+    """Calculate Greeks for a single option"""
+    try:
+        logger.info(f"Single option Greeks calculation requested: {option_type.upper()} {strike_price}")
+        
+        if option_type.lower() not in ['call', 'put']:
+            raise HTTPException(status_code=400, detail="Option type must be 'call' or 'put'")
+        
         time_to_expiry = days_to_expiry / 365.0
         
-        # Calculate implied volatility
-        calc = AdvancedGreeksCalculator()
-        implied_vol = calc.implied_volatility(
-            option_price, spot_price, strike_price, time_to_expiry,
-            risk_free_rate, option_type
+        # Calculate option price
+        if option_type.lower() == 'call':
+            option_price = greeks_calc.black_scholes_call(
+                spot_price, strike_price, time_to_expiry, risk_free_rate, volatility
+            )
+        else:
+            option_price = greeks_calc.black_scholes_put(
+                spot_price, strike_price, time_to_expiry, risk_free_rate, volatility
+            )
+        
+        # Calculate Greeks
+        greeks = greeks_calc.calculate_greeks(
+            spot_price, strike_price, time_to_expiry, risk_free_rate, volatility, option_type.lower()
         )
         
-        return jsonify({
-            'success': True,
-            'implied_volatility': round(implied_vol, 4),
-            'implied_volatility_percent': round(implied_vol * 100, 2),
-            'input_parameters': {
-                'option_price': option_price,
-                'spot_price': spot_price,
-                'strike_price': strike_price,
-                'days_to_expiry': days_to_expiry,
-                'option_type': option_type,
-                'risk_free_rate': risk_free_rate
-            }
-        })
+        # Calculate additional metrics
+        if option_type.lower() == 'call':
+            intrinsic_value = max(spot_price - strike_price, 0)
+        else:
+            intrinsic_value = max(strike_price - spot_price, 0)
         
-    except ValueError as e:
-        return jsonify({
-            'success': False,
-            'error': f'Invalid parameter value: {str(e)}'
-        }), 400
-    except Exception as e:
-        logger.error(f"Implied volatility calculation error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
-
-@app.route('/api/portfolio-greeks', methods=['POST'])
-def calculate_portfolio_greeks():
-    """Calculate portfolio-level Greeks for a given position"""
-    try:
-        data = request.get_json()
+        time_value = max(option_price - intrinsic_value, 0)
         
-        if not data or 'positions' not in data:
-            return jsonify({
-                'success': False,
-                'error': 'Positions data required'
-            }), 400
+        moneyness = 'ATM' if abs(strike_price - spot_price) <= 25 else ('ITM' if (
+            (option_type.lower() == 'call' and strike_price < spot_price) or
+            (option_type.lower() == 'put' and strike_price > spot_price)
+        ) else 'OTM')
         
-        positions = data['positions']
-        spot_price = float(data.get('spot_price', 24350))  # Default Nifty level
-        
-        portfolio_greeks = {
-            'delta': 0.0,
-            'gamma': 0.0,
-            'theta': 0.0,
-            'vega': 0.0,
-            'rho': 0.0
+        result = {
+            "option_details": {
+                "spot_price": spot_price,
+                "strike_price": strike_price,
+                "option_type": option_type.upper(),
+                "days_to_expiry": days_to_expiry,
+                "time_to_expiry": round(time_to_expiry, 6),
+                "volatility": volatility,
+                "risk_free_rate": risk_free_rate
+            },
+            "pricing": {
+                "theoretical_price": round(option_price, 2),
+                "intrinsic_value": round(intrinsic_value, 2),
+                "time_value": round(time_value, 2),
+                "moneyness": moneyness
+            },
+            "greeks": greeks
         }
         
-        total_value = 0.0
-        calc = AdvancedGreeksCalculator()
+        return {
+            "success": True,
+            "data": result,
+            "timestamp": datetime.now().isoformat()
+        }
         
-        for position in positions:
-            strike = float(position['strike'])
-            quantity = int(position['quantity'])
-            option_type = position['option_type'].lower()
-            days_to_expiry = int(position.get('days_to_expiry', 30))
-            volatility = float(position.get('volatility', 0.20))
-            
-            time_to_expiry = days_to_expiry / 365.0
-            
-            # Calculate option price and Greeks
-            if option_type == 'call':
-                option_price = calc.black_scholes_call(spot_price, strike, time_to_expiry, 0.065, volatility)
-            else:
-                option_price = calc.black_scholes_put(spot_price, strike, time_to_expiry, 0.065, volatility)
-            
-            greeks = calc.calculate_greeks(spot_price, strike, time_to_expiry, 0.065, volatility, option_type)
-            
-            # Add to portfolio Greeks (weighted by quantity)
-            portfolio_greeks['delta'] += greeks['delta'] * quantity
-            portfolio_greeks['gamma'] += greeks['gamma'] * quantity
-            portfolio_greeks['theta'] += greeks['theta'] * quantity
-            portfolio_greeks['vega'] += greeks['vega'] * quantity
-            portfolio_greeks['rho'] += greeks['rho'] * quantity
-            
-            total_value += option_price * quantity
-        
-        return jsonify({
-            'success': True,
-            'portfolio_greeks': {k: round(v, 6) for k, v in portfolio_greeks.items()},
-            'total_portfolio_value': round(total_value, 2),
-            'positions_count': len(positions),
-            'spot_price_used': spot_price
-        })
-        
-    except ValueError as e:
-        return jsonify({
-            'success': False,
-            'error': f'Invalid parameter value: {str(e)}'
-        }), 400
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Portfolio Greeks calculation error: {str(e)}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        }), 500
+        logger.error(f"Error calculating option Greeks: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-if __name__ == '__main__':
-    app.run(debug=app.config['DEBUG'], host=app.config['HOST'], port=app.config['PORT'])
+@app.get("/api/info")
+async def get_api_info():
+    """Get comprehensive API information"""
+    try:
+        # Test data source connectivity
+        spot_price = nse_api.get_nifty_price()
+        data_status = "connected" if spot_price else "disconnected"
+        
+        api_info = {
+            "title": "NIFTY Options Greeks Analyzer",
+            "version": "3.0.0",
+            "description": "NSE India powered NIFTY options analysis API",
+            "data_source": {
+                "provider": "NSE India",
+                "status": data_status,
+                "last_price": spot_price,
+                "features": [
+                    "Real-time NIFTY pricing",
+                    "Historical volatility calculation",
+                    "Live market data access"
+                ]
+            },
+            "capabilities": [
+                "Black-Scholes options pricing",
+                "Complete Greeks calculation (Delta, Gamma, Theta, Vega, Rho)",
+                "Implied volatility calculation",
+                "Portfolio Greeks aggregation",
+                "Options chain generation",
+                "Historical volatility analysis"
+            ],
+            "endpoints": [
+                "GET / - Web dashboard",
+                "GET /api/status - API health check",
+                "GET /api/nifty-price - Current NIFTY price",
+                "GET /api/historical-volatility - Historical volatility",
+                "POST /api/options-chain - Generate options chain",
+                "POST /api/calculate-implied-volatility - Calculate IV",
+                "POST /api/portfolio-greeks - Portfolio analysis",
+                "GET /api/option-greeks - Single option Greeks",
+                "GET /api/info - This endpoint"
+            ],
+            "documentation": {
+                "swagger_ui": "/docs",
+                "redoc": "/redoc"
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        logger.info("API info requested")
+        return api_info
+        
+    except Exception as e:
+        logger.error(f"API info error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "version": "3.0.0"
+    }
+
+@app.get("/api/oi-chart-data")
+async def get_oi_chart_data():
+    """Generate sample OI chart data for testing the enhanced visualization"""
+    try:
+        logger.info("OI chart data requested")
+        
+        # Get current spot price
+        spot_price = nse_api.get_nifty_price()
+        if not spot_price:
+            spot_price = 24350  # Fallback
+            
+        # Generate strikes around current price
+        strikes = []
+        base_strike = round(spot_price / 50) * 50
+        for i in range(-10, 11):
+            strikes.append(base_strike + (i * 50))
+        
+        # Calculate theoretical OI
+        oi_data = oi_calculator.calculate_theoretical_oi(
+            spot_price, strikes, volatility=0.20, days_to_expiry=7
+        )
+        
+        # Generate chart data
+        chart_data = oi_calculator.generate_oi_chart_data(oi_data)
+        
+        # Calculate analytics
+        max_pain = oi_calculator.calculate_max_pain(oi_data)
+        support_levels, resistance_levels = oi_calculator.identify_support_resistance(oi_data, spot_price)
+        
+        response_data = {
+            "success": True,
+            "chart_data": chart_data,
+            "analytics": {
+                "spot_price": spot_price,
+                "max_pain_strike": max_pain,
+                "total_call_oi": chart_data["total_call_oi"],
+                "total_put_oi": chart_data["total_put_oi"],
+                "total_pcr": chart_data["total_pcr"],
+                "support_levels": support_levels,
+                "resistance_levels": resistance_levels
+            },
+            "metadata": {
+                "total_strikes": len(strikes),
+                "strike_range": f"{min(strikes)} - {max(strikes)}",
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+        
+        logger.success("Generated OI chart data successfully")
+        return response_data
+        
+    except Exception as e:
+        logger.error(f"Error generating OI chart data: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "fastapi_nse:app", 
+        host="0.0.0.0", 
+        port=8000, 
+        reload=True,
+        log_level="info"
+    )

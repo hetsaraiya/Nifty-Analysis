@@ -4,8 +4,10 @@ uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 jinja2>=3.1.0
 
+# Advanced scraping with browser impersonation
+curl_cffi>=0.7.0
+
 # Data processing and analysis
-requests==2.31.0
 pandas>=2.0.0
 numpy>=1.24.0
 scipy>=1.10.0
@@ -18,11 +20,3 @@ loguru>=0.7.0
 
 # Date/time handling
 python-dateutil>=2.8.0
-
-# Optional: Keep Flask for backward compatibility if needed
-Flask==3.0.0
-Werkzeug>=3.0.0
-MarkupSafe>=2.1.0
-itsdangerous>=2.1.0
-click>=8.1.0
-blinker>=1.6.0

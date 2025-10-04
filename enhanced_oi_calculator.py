@@ -1,7 +1,8 @@
 """
-Enhanced Open Interest Calculator for NIFTY Options
-Since Yahoo Finance doesn't provide actual OI data, this module generates
-realistic theoretical OI patterns based on market behavior and volatility.
+Enhanced Open Interest Calculator
+Generates realistic Open Interest patterns for options analysis
+Since NSE doesn't always provide actual OI data, this module generates
+theoretical OI patterns based on market behavior and option pricing models.
 """
 
 import numpy as np
@@ -208,7 +209,7 @@ class OpenInterestCalculator:
         return chart_data
 
 class MarketDataEnhancer:
-    """Enhance Yahoo Finance data with realistic market patterns"""
+    """Enhance options data with realistic market patterns"""
     
     def __init__(self):
         self.oi_calculator = OpenInterestCalculator()

@@ -21,24 +21,16 @@ except ImportError as e:
 
 # Function to start the appropriate service
 start_service() {
-    local service=${1:-yahoo}
+    local service=${1:-nse}
     
     case $service in
-        "yahoo")
-            echo "🚀 Starting Yahoo Finance API..."
-            exec uvicorn fastapi_yahoo:app --host 0.0.0.0 --port 8000 --workers 1
-            ;;
-        "full")
-            echo "🚀 Starting Full API with Angel One..."
-            exec uvicorn fastapi_app:app --host 0.0.0.0 --port 8000 --workers 1
-            ;;
-        "flask")
-            echo "🚀 Starting Flask Application..."
-            exec python run.py production
+        "nse")
+            echo "🚀 Starting NSE API..."
+            exec uvicorn app:app --host 0.0.0.0 --port 8000 --workers 1
             ;;
         *)
             echo "❌ Unknown service: $service"
-            echo "Available services: yahoo, full, flask"
+            echo "Available services: nse"
             exit 1
             ;;
     esac
