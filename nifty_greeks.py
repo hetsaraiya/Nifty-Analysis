@@ -12,13 +12,13 @@ import warnings
 from typing import Dict, List, Optional, Tuple, Union
 from loguru import logger
 import time
-from nse_data_fetcher import NSEDataFetcher, get_nse_fetcher
+from data_fetcher import NSEDataFetcher, get_nse_fetcher
 
 warnings.filterwarnings('ignore')
 
 # Configure logging
 logger.add(
-    "logs/nse_nifty_greeks.log",
+    "logs/nifty_greeks.log",
     rotation="1 day",
     retention="30 days", 
     level="INFO",

@@ -1,5 +1,5 @@
 """
-Configuration settings for NIFTY Option Chain Analysis Application with Angel One SmartAPI
+Configuration settings for NIFTY Option Chain Analysis Application
 """
 
 import os
@@ -14,22 +14,6 @@ class Config:
     
     # Cache settings
     CACHE_TIMEOUT = int(os.environ.get('CACHE_TIMEOUT', 300))  # 5 minutes
-    
-    # Angel One SmartAPI settings
-    ANGEL_ONE_BASE_URL = 'https://apiconnect.angelone.in'
-    ANGEL_ONE_LOGIN_URL = 'https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword'
-    ANGEL_ONE_OPTION_GREEKS_URL = 'https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/optionGreek'
-    ANGEL_ONE_PROFILE_URL = 'https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/getProfile'
-    ANGEL_ONE_LOGOUT_URL = 'https://apiconnect.angelone.in/rest/secure/angelbroking/user/v1/logout'
-    
-    # Pre-configured Angel One API credentials
-    ANGEL_ONE_API_KEY = "Dp0EfWvN"
-    ANGEL_ONE_SECRET_KEY = "dc718b15-94c4-4cd1-b3ab-67a2cebe378c"
-    
-    # Required user credentials (must be set in environment)
-    ANGEL_ONE_CLIENT_CODE = os.environ.get('ANGEL_ONE_CLIENT_CODE')
-    ANGEL_ONE_PIN = os.environ.get('ANGEL_ONE_PIN')
-    ANGEL_ONE_TOTP_SECRET = os.environ.get('ANGEL_ONE_TOTP_SECRET')
     
     # Network configuration
     CLIENT_LOCAL_IP = os.environ.get('CLIENT_LOCAL_IP', '127.0.0.1')

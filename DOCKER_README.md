@@ -6,41 +6,24 @@ This document provides instructions for running the Nifty Analysis application u
 
 ### 1. Prerequisites
 - Docker and Docker Compose installed
-- Optional: Angel One SmartAPI credentials for full functionality
 
 ### 2. Environment Setup
 ```bash
 # Copy the environment template
 cp .env.example .env
 
-# Edit .env file with your credentials (optional for Yahoo Finance API)
+# Edit .env file with your credentials (optional)
 nano .env
 ```
 
 ### 3. Run with Docker Compose
 
-#### Yahoo Finance API Only (No credentials required)
+#### Start the API Service
 ```bash
-# Start the Yahoo Finance API service
-docker-compose up nifty-yahoo-api
+# Start the API service
+docker-compose up nifty-api
 
 # Access at: http://localhost:8000
-```
-
-#### Full Angel One API (Requires credentials)
-```bash
-# Start the full API service with Angel One integration
-docker-compose up nifty-full-api
-
-# Access at: http://localhost:8001
-```
-
-#### Flask Web Application
-```bash
-# Start the Flask web application
-docker-compose up nifty-flask-app
-
-# Access at: http://localhost:5000
 ```
 
 #### All Services
@@ -74,7 +57,7 @@ docker run -p 8000:8000 --env-file .env nifty-analysis
 docker-compose ps
 
 # View logs
-docker-compose logs nifty-yahoo-api
+docker-compose logs nifty-api
 docker-compose logs -f  # Follow logs
 
 # Stop services
@@ -86,33 +69,14 @@ docker-compose up --build
 
 ## API Endpoints
 
-### Yahoo Finance API (Port 8000)
+### API Service (Port 8000)
 - `GET /` - Web interface
-- `GET /api/v1/nifty/current-price` - Current NIFTY price
-- `GET /api/v1/options/chain` - Option chain data
-- `GET /api/v1/options/greeks` - Greeks calculation
-- `POST /api/v1/portfolio/analyze` - Portfolio analysis
-
-### Full Angel One API (Port 8001)
-- All Yahoo Finance endpoints plus:
-- Real-time Angel One data integration
-- Advanced trading features
-- Enhanced analytics
-
-### Flask Web App (Port 5000)
-- Complete web interface
-- Interactive charts and analysis
-- Portfolio management
+- `GET /api/status` - Service status
+- `POST /api/options-chain` - Generate options chain
+- `POST /api/calculate-implied-volatility` - Calculate IV
+- `POST /api/portfolio-greeks` - Portfolio Greeks
 
 ## Environment Variables
-
-### Required for Angel One API
-```bash
-ANGEL_ONE_API_KEY=your_api_key
-ANGEL_ONE_CLIENT_ID=your_client_id
-ANGEL_ONE_PASSWORD=your_password
-ANGEL_ONE_TOTP_SECRET=your_totp_secret
-```
 
 ### Optional Configuration
 ```bash

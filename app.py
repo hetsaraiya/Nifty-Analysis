@@ -18,7 +18,7 @@ import json
 import time
 import os
 from loguru import logger
-from nse_nifty_greeks import NSEFinanceAPI, NiftyOptionsChain, GreeksCalculator, PortfolioGreeksCalculator
+from nifty_greeks import NSEFinanceAPI, NiftyOptionsChain, GreeksCalculator, PortfolioGreeksCalculator
 from enhanced_oi_calculator import OpenInterestCalculator, MarketDataEnhancer
 
 # Configure Loguru logging
@@ -300,9 +300,8 @@ async def generate_options_chain(request: OptionsChainRequest):
             enhanced_options_data, spot_price
         )
         
-        # Combine with original analysis
-        analysis = options_chain.analyze_options_chain(df)
-        analysis.update(comprehensive_analytics)
+        # Use comprehensive analytics as analysis
+        analysis = comprehensive_analytics
         
         metadata = {
             "total_options": int(len(enhanced_options_data)),
